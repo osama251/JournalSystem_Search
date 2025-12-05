@@ -30,14 +30,15 @@ public class PatientResource {
 
     @GET
     @Path("/getByName/{patientName}")
-    public Uni<JsonObject> getPatientByName(@PathParam("patientName") String patientName){
+    public Uni<List<JsonObject>> getPatientByName(@PathParam("patientName") String patientName){
         String sql = "SELECT user_name, email, patient_id, address, age, gender, p.user_id FROM patient as p, user as u WHERE user_name LIKE ? AND p.user_id = u.user_id";
         return authPool
                 .preparedQuery(sql)
                 .execute(Tuple.of(patientName))
                 .onItem().transform(rows -> {
                     Row row = rows.iterator().next();
-                    return new JsonObject()
+                    List<JsonObject> patients = new ArrayList<>();
+                    JsonObject obj = new JsonObject()
                             .put("user_name", row.getString("user_name"))
                             .put("email", row.getString("email"))
                             .put("patient_id", row.getLong("patient_id"))
@@ -45,6 +46,8 @@ public class PatientResource {
                             .put("age", row.getInteger("age"))
                             .put("gender", row.getString("gender"))
                             .put("user_id", row.getLong("user_id"));
+                    patients.add(obj);
+                    return patients;
                 });
     }
 

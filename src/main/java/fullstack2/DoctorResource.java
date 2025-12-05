@@ -56,28 +56,31 @@ public class DoctorResource {
     }
 
     @GET
-    @Path("/getDoctorEncountersByDate/{employeeName}/{date}")
+    @Path("/getDoctorEncountersByDate/{doctorName}/{date}")
     public Uni<List<JsonObject>> getDoctorEncountersByDate(
-            @PathParam("employeeName") String employeeName,
+            @PathParam("doctorName") String doctorName,
             @PathParam("date") String dateStr
     ) {
-        LocalDateTime date;
+        LocalDate date;
         try {
-            date = LocalDateTime.parse(dateStr);
+            date = LocalDate.parse(dateStr); // e.g. 2025-11-27
         } catch (Exception e) {
             return Uni.createFrom().failure(
-                    new IllegalArgumentException("Invalid date format, expected e.g. 2025-11-27T10:45:50")
+                    new IllegalArgumentException("Invalid date format, expected 2025-11-27")
             );
         }
 
+        LocalDateTime start = date.atStartOfDay();          // 2025-11-27 00:00:00
+        LocalDateTime end   = date.plusDays(1).atStartOfDay(); // 2025-11-28 00:00:00
+
         String sql1 =
-                "SELECT e.id, e.date_time, e.employee_id, e.patient_id, o.note " +
-                        "FROM encounter e LEFT JOIN observation o ON e.id=o.encounter_id" +
-                        " WHERE e.date_time = ?";
+                "SELECT e.id, e.date_time, e.doctor_id, e.patient_id, o.note " +
+                        "FROM encounter e LEFT JOIN observation o ON e.id=o.encounter_id " +
+                        "WHERE e.date_time >= ? AND e.date_time < ?";
 
         return logsPool
                 .preparedQuery(sql1)
-                .execute(Tuple.of(date))
+                .execute(Tuple.of(start, end))
                 .onItem().transformToUni(rows -> {
                     List<Row> encounterRows = rows.stream().toList();
 
@@ -85,28 +88,28 @@ public class DoctorResource {
                         return Uni.createFrom().item(List.<JsonObject>of());
                     }
 
-                    List<Long> employeeIds = new ArrayList<>();
+                    List<Long> doctorIds = new ArrayList<>();
                     List<Long> patientIds = new ArrayList<>();
 
                     for (Row row : encounterRows) {
-                        Long eid = row.getLong("employee_id");
+                        Long eid = row.getLong("doctor_id");
                         Long pid = row.getLong("patient_id");
 
-                        if (eid != null && !employeeIds.contains(eid)) {
-                            employeeIds.add(eid);
+                        if (eid != null && !doctorIds.contains(eid)) {
+                            doctorIds.add(eid);
                         }
                         if (pid != null && !patientIds.contains(pid)) {
                             patientIds.add(pid);
                         }
                     }
 
-                    if (employeeIds.isEmpty() || patientIds.isEmpty()) {
+                    if (doctorIds.isEmpty() || patientIds.isEmpty()) {
                         return Uni.createFrom().item(List.<JsonObject>of());
                     }
 
                     String empPlaceholder = String.join(
                             ",",
-                            employeeIds.stream().map(x -> "?").toList()
+                            doctorIds.stream().map(x -> "?").toList()
                     );
                     String patPlaceholder = String.join(
                             ",",
@@ -114,20 +117,20 @@ public class DoctorResource {
                     );
 
                     String sql2 =
-                            "SELECT e.employee_id, p.patient_id, " +
-                                    "       eu.user_name AS employee_name, " +
+                            "SELECT e.doctor_id, p.patient_id, " +
+                                    "       eu.user_name AS doctor_name, " +
                                     "       pu.user_name AS patient_name " +
-                                    "FROM employee e " +
+                                    "FROM doctor e " +
                                     "JOIN user eu ON e.user_id = eu.user_id " +
                                     "JOIN patient p ON 1=1 " +
                                     "JOIN user pu ON p.user_id = pu.user_id " +
                                     "WHERE eu.user_name LIKE ? " +
-                                    "  AND e.employee_id IN (" + empPlaceholder + ") " +
+                                    "  AND e.doctor_id IN (" + empPlaceholder + ") " +
                                     "  AND p.patient_id IN (" + patPlaceholder + ")";
 
                     List<Object> params = new ArrayList<>();
-                    params.add(employeeName);
-                    params.addAll(employeeIds);
+                    params.add(doctorName);
+                    params.addAll(doctorIds);
                     params.addAll(patientIds);
 
                     return authPool
@@ -135,15 +138,15 @@ public class DoctorResource {
                             .execute(Tuple.from(params))
                             .onItem().transform(rows2 -> {
                                 // Maps: id -> name
-                                Map<Long, String> employeeNames = new HashMap<>();
+                                Map<Long, String> doctorNames = new HashMap<>();
                                 Map<Long, String> patientNames = new HashMap<>();
 
                                 for (Row r : rows2) {
-                                    Long eid = r.getLong("employee_id");
+                                    Long eid = r.getLong("doctor_id");
                                     Long pid = r.getLong("patient_id");
 
                                     if (eid != null) {
-                                        employeeNames.put(eid, r.getString("employee_name"));
+                                        doctorNames.put(eid, r.getString("doctor_name"));
                                     }
                                     if (pid != null) {
                                         patientNames.put(pid, r.getString("patient_name"));
@@ -153,10 +156,10 @@ public class DoctorResource {
                                 List<JsonObject> result = new ArrayList<>();
                                 for (Row er : encounterRows) {
 
-                                    Long eid = er.getLong("employee_id");
+                                    Long eid = er.getLong("doctor_id");
                                     Long pid = er.getLong("patient_id");
 
-                                    String empName = (eid != null) ? employeeNames.get(eid) : null;
+                                    String empName = (eid != null) ? doctorNames.get(eid) : null;
                                     String patName = (pid != null) ? patientNames.get(pid) : null;
 
                                     if (empName == null) continue;
@@ -164,7 +167,7 @@ public class DoctorResource {
                                     JsonObject json = new JsonObject()
                                             .put("encounter_id", er.getLong("id"))
                                             .put("date_time", er.getLocalDateTime("date_time").toString())
-                                            .put("employee_name", empName)
+                                            .put("doctor_name", empName)
                                             .put("patient_name", patName)
                                             .put("note", er.getString("note"));
 

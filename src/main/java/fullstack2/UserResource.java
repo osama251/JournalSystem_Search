@@ -2,42 +2,64 @@ package fullstack2;
 
 import io.smallrye.mutiny.Uni;
 import io.vertx.core.json.JsonObject;
-import io.vertx.mutiny.mysqlclient.MySQLPool;
-import io.vertx.mutiny.sqlclient.Row;
-import jakarta.enterprise.inject.Produces;
 import jakarta.inject.Inject;
-import jakarta.inject.Named;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.Path;
+import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
+import org.keycloak.admin.client.Keycloak;
+import org.keycloak.representations.idm.RoleRepresentation;
+import org.keycloak.representations.idm.UserRepresentation;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @Path("/user")
+@Produces(MediaType.APPLICATION_JSON)
 public class UserResource {
 
     @Inject
-    @Named("auth")
-    MySQLPool authPool;
+    Keycloak keycloak;
+
+    @ConfigProperty(name = "keycloak.realm")
+    String realm;
 
     @GET
-    //@Produces(MediaType.APPLICATION_JSON)
     public Uni<List<JsonObject>> getAllUsers() {
-        return authPool
-            .query("SELECT user_id, user_name, email, role FROM user")
-            .execute()
-            .onItem().transform(rows -> {
-                List<JsonObject> list = new ArrayList<>();
-                for (Row row : rows) {
-                    JsonObject json = new JsonObject()
-                        .put("user_id", row.getLong("user_id"))
-                        .put("user_name", row.getString("user_name"))
-                        .put("email", row.getString("email"))
-                        .put("role", row.getString("role"));
-                    list.add(json);
-                }
-                return list;
-            });
+        return Uni.createFrom().item(() -> {
+            // fetch users from Keycloak
+            List<UserRepresentation> users =
+                    keycloak.realm(realm).users().list();
+
+            List<JsonObject> list = new ArrayList<>();
+
+            for (UserRepresentation u : users) {
+                // optional: fetch realm roles (can be slow if many users)
+                List<RoleRepresentation> roles = keycloak.realm(realm)
+                        .users()
+                        .get(u.getId())
+                        .roles()
+                        .realmLevel()
+                        .listAll();
+
+                String role = roles.stream()
+                        .map(RoleRepresentation::getName)
+                        .filter(r -> !r.startsWith("default-roles-"))
+                        .findFirst()
+                        .orElse(null);
+
+                JsonObject json = new JsonObject()
+                        .put("user_id", u.getId())          // Keycloak ID is String (UUID)
+                        .put("user_name", u.getUsername())
+                        .put("email", u.getEmail())
+                        .put("role", role);
+
+                list.add(json);
+            }
+
+            return list;
+        });
     }
 }

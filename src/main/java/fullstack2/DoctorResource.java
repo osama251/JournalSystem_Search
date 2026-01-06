@@ -5,11 +5,16 @@ import io.vertx.core.json.JsonObject;
 import io.vertx.mutiny.mysqlclient.MySQLPool;
 import io.vertx.mutiny.sqlclient.Row;
 import io.vertx.mutiny.sqlclient.Tuple;
+import jakarta.enterprise.inject.Produces;
 import jakarta.inject.Inject;
 import jakarta.inject.Named;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.core.MediaType;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
+import org.keycloak.admin.client.Keycloak;
+import org.keycloak.representations.idm.UserRepresentation;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -27,36 +32,100 @@ public class DoctorResource {
     @Named("logs")
     MySQLPool logsPool;
 
+    @Inject
+    Keycloak keycloak;
+
+    @ConfigProperty(name = "keycloak.realm")
+    String realm;
+
     @GET
     @Path("/getByDoctorName/{doctorName}")
-    public Uni<List<JsonObject>> getDoctorAndPatientsByDoctorName(@PathParam("doctorName") String doctorName){
-        String sql = "SELECT u.user_name as doctor_name, u.email as doctor_mail, o.address as organization_address, o.name as organization_name, p.age, p.gender, p.address as patient_address, pu.user_name as patient_name, pu.email as patient_mail FROM doctor as d, user as u, organization as o, patient as p, user as pu, doctor_patient as dp WHERE dp.doctor_id=d.doctor_id AND dp.patient_id=p.patient_id AND d.user_id = u.user_id AND p.user_id=pu.user_id AND d.organization_id = o.id AND u.user_name LIKE ?";
-        return authPool
-                .preparedQuery(sql)
-                .execute(Tuple.of(doctorName))
-                .onItem().transform(rows -> {
-                    List<JsonObject> list = new ArrayList<>();
+    //@Produces(MediaType.APPLICATION_JSON)
+    public Uni<List<JsonObject>> getDoctorAndPatientsByDoctorName(@PathParam("doctorName") String doctorName) {
 
-                    for(Row row : rows){
-                        JsonObject json = new JsonObject()
-                                .put("doctor_name", row.getString("doctor_name"))
-                                .put("doctor_mail", row.getString("doctor_mail"))
-                                .put("organization_name", row.getString("organization_name"))
-                                .put("organization_address", row.getString("organization_address"))
-                                .put("patient_name", row.getString("patient_name"))
-                                .put("patient_mail", row.getString("patient_mail"))
-                                .put("patient_age", row.getInteger("age"))
-                                .put("patient_gender", row.getString("gender"))
-                                .put("patient_address", row.getString("patient_address"));
-                        list.add(json);
-                    }
+        return Uni.createFrom().item(() -> {
 
-                    return list;
-                });
+            // 1) Find doctor by username
+            List<UserRepresentation> doctors = keycloak.realm(realm)
+                    .users()
+                    .searchByUsername(doctorName, true);
+
+            if (doctors.isEmpty()) {
+                // Return empty list (or throw 404 if you prefer)
+                return List.<JsonObject>of();
+            }
+
+            UserRepresentation doctor = keycloak.realm(realm)
+                    .users()
+                    .get(doctors.get(0).getId())
+                    .toRepresentation();
+
+            Map<String, List<String>> dAttrs = doctor.getAttributes();
+
+            String doctorUsername = doctor.getUsername();
+            String doctorEmail = doctor.getEmail();
+
+            // Organization info stored as attributes on doctor (adjust keys to your real ones)
+            String orgName = getAttr(dAttrs, "organizationName");
+            String orgAddress = getAttr(dAttrs, "organizationAddress");
+
+            // 2) Doctor has "patients" attribute = list of patient usernames
+            List<String> patientUsernames = dAttrs != null ? dAttrs.get("patients") : null;
+            if (patientUsernames == null) patientUsernames = List.of();
+
+            // 3) Build response: one item per patient
+            List<JsonObject> result = new ArrayList<>();
+
+            for (String patientUsername : patientUsernames) {
+                if (patientUsername == null || patientUsername.isBlank()) continue;
+
+                List<UserRepresentation> matches = keycloak.realm(realm)
+                        .users()
+                        .searchByUsername(patientUsername, true);
+
+                if (matches.isEmpty()) {
+                    // Patient username listed but no such Keycloak user exists -> skip
+                    continue;
+                }
+
+                UserRepresentation patient = keycloak.realm(realm)
+                        .users()
+                        .get(matches.get(0).getId())
+                        .toRepresentation();
+
+                Map<String, List<String>> pAttrs = patient.getAttributes();
+
+                JsonObject json = new JsonObject()
+                        .put("doctor_name", doctorUsername)
+                        .put("doctor_mail", doctorEmail)
+                        .put("organization_name", orgName)
+                        .put("organization_address", orgAddress)
+                        .put("patient_name", patient.getUsername())
+                        .put("patient_mail", patient.getEmail())
+                        .put("patient_age", getAttr(pAttrs, "age"))
+                        .put("patient_gender", getAttr(pAttrs, "gender"))
+                        .put("patient_address", getAttr(pAttrs, "address"));
+
+                result.add(json);
+            }
+
+            return result;
+        });
+    }
+
+    private String getAttr(Map<String, List<String>> attrs, String key) {
+        if (attrs != null && attrs.containsKey(key)) {
+            List<String> values = attrs.get(key);
+            if (values != null && !values.isEmpty()) {
+                return values.get(0);
+            }
+        }
+        return null;
     }
 
     @GET
     @Path("/getDoctorEncountersByDate/{doctorName}/{date}")
+    //@Produces(MediaType.APPLICATION_JSON)
     public Uni<List<JsonObject>> getDoctorEncountersByDate(
             @PathParam("doctorName") String doctorName,
             @PathParam("date") String dateStr
@@ -70,113 +139,93 @@ public class DoctorResource {
             );
         }
 
-        LocalDateTime start = date.atStartOfDay();          // 2025-11-27 00:00:00
-        LocalDateTime end   = date.plusDays(1).atStartOfDay(); // 2025-11-28 00:00:00
+        // 1) Resolve doctor user in Keycloak (by username)
+        return Uni.createFrom().item(() -> {
+            List<UserRepresentation> doctors = keycloak.realm(realm)
+                    .users()
+                    .searchByUsername(doctorName, true);
 
-        String sql1 =
-                "SELECT e.id, e.date_time, e.doctor_id, e.patient_id, o.note " +
-                        "FROM encounter e LEFT JOIN observation o ON e.id=o.encounter_id " +
-                        "WHERE e.date_time >= ? AND e.date_time < ?";
+            if (doctors.isEmpty()) {
+                return (UserRepresentation) null;
+            }
 
-        return logsPool
-                .preparedQuery(sql1)
-                .execute(Tuple.of(start, end))
-                .onItem().transformToUni(rows -> {
-                    List<Row> encounterRows = rows.stream().toList();
+            return keycloak.realm(realm)
+                    .users()
+                    .get(doctors.get(0).getId())
+                    .toRepresentation();
+        }).onItem().transformToUni(doctorUser -> {
 
-                    if (encounterRows.isEmpty()) {
-                        return Uni.createFrom().item(List.<JsonObject>of());
-                    }
+            if (doctorUser == null) {
+                return Uni.createFrom().item(List.<JsonObject>of());
+            }
 
-                    List<Long> doctorIds = new ArrayList<>();
-                    List<Long> patientIds = new ArrayList<>();
+            String doctorId = doctorUser.getId();           // Keycloak ID (UUID)
+            String doctorUsername = doctorUser.getUsername();
 
-                    for (Row row : encounterRows) {
-                        Long eid = row.getLong("doctor_id");
-                        Long pid = row.getLong("patient_id");
+            LocalDateTime start = date.atStartOfDay();
+            LocalDateTime end = date.plusDays(1).atStartOfDay();
 
-                        if (eid != null && !doctorIds.contains(eid)) {
-                            doctorIds.add(eid);
+            // 2) Fetch encounters for that doctor within the date range
+            String sql =
+                    "SELECT e.id, e.date_time, e.doctor_id, e.patient_id, o.note " +
+                            "FROM encounter e " +
+                            "LEFT JOIN observation o ON e.id = o.encounter_id " +
+                            "WHERE e.date_time >= ? AND e.date_time < ? " +
+                            "  AND e.doctor_id = ?";
+
+            return logsPool
+                    .preparedQuery(sql)
+                    .execute(Tuple.of(start, end, doctorId))
+                    .onItem().transformToUni(rows -> {
+
+                        List<Row> encounterRows = rows.stream().toList();
+                        if (encounterRows.isEmpty()) {
+                            return Uni.createFrom().item(List.<JsonObject>of());
                         }
-                        if (pid != null && !patientIds.contains(pid)) {
-                            patientIds.add(pid);
+
+                        // 3) Collect unique patient ids from encounters
+                        List<String> patientIds = new ArrayList<>();
+                        for (Row r : encounterRows) {
+                            String pid = r.getString("patient_id"); // UUID string
+                            if (pid != null && !patientIds.contains(pid)) {
+                                patientIds.add(pid);
+                            }
                         }
-                    }
 
-                    if (doctorIds.isEmpty() || patientIds.isEmpty()) {
-                        return Uni.createFrom().item(List.<JsonObject>of());
-                    }
+                        // 4) Resolve patient names from Keycloak
+                        Map<String, String> patientNames = new HashMap<>();
+                        for (String pid : patientIds) {
+                            try {
+                                UserRepresentation p = keycloak.realm(realm)
+                                        .users()
+                                        .get(pid)
+                                        .toRepresentation();
 
-                    String empPlaceholder = String.join(
-                            ",",
-                            doctorIds.stream().map(x -> "?").toList()
-                    );
-                    String patPlaceholder = String.join(
-                            ",",
-                            patientIds.stream().map(x -> "?").toList()
-                    );
+                                patientNames.put(pid, p.getUsername());
+                            } catch (Exception ignored) {
+                                // patient id exists in DB but not in Keycloak -> name stays null
+                            }
+                        }
 
-                    String sql2 =
-                            "SELECT e.doctor_id, p.patient_id, " +
-                                    "       eu.user_name AS doctor_name, " +
-                                    "       pu.user_name AS patient_name " +
-                                    "FROM doctor e " +
-                                    "JOIN user eu ON e.user_id = eu.user_id " +
-                                    "JOIN patient p ON 1=1 " +
-                                    "JOIN user pu ON p.user_id = pu.user_id " +
-                                    "WHERE eu.user_name LIKE ? " +
-                                    "  AND e.doctor_id IN (" + empPlaceholder + ") " +
-                                    "  AND p.patient_id IN (" + patPlaceholder + ")";
+                        // 5) Build response
+                        List<JsonObject> result = new ArrayList<>();
+                        for (Row er : encounterRows) {
+                            String pid = er.getString("patient_id");
+                            String patientName = pid != null ? patientNames.get(pid) : null;
 
-                    List<Object> params = new ArrayList<>();
-                    params.add(doctorName);
-                    params.addAll(doctorIds);
-                    params.addAll(patientIds);
+                            JsonObject json = new JsonObject()
+                                    .put("encounter_id", er.getLong("id"))
+                                    .put("date_time", er.getLocalDateTime("date_time").toString())
+                                    .put("doctor_name", doctorUsername)
+                                    .put("patient_name", patientName)
+                                    .put("note", er.getString("note"));
 
-                    return authPool
-                            .preparedQuery(sql2)
-                            .execute(Tuple.from(params))
-                            .onItem().transform(rows2 -> {
-                                // Maps: id -> name
-                                Map<Long, String> doctorNames = new HashMap<>();
-                                Map<Long, String> patientNames = new HashMap<>();
+                            result.add(json);
+                        }
 
-                                for (Row r : rows2) {
-                                    Long eid = r.getLong("doctor_id");
-                                    Long pid = r.getLong("patient_id");
-
-                                    if (eid != null) {
-                                        doctorNames.put(eid, r.getString("doctor_name"));
-                                    }
-                                    if (pid != null) {
-                                        patientNames.put(pid, r.getString("patient_name"));
-                                    }
-                                }
-
-                                List<JsonObject> result = new ArrayList<>();
-                                for (Row er : encounterRows) {
-
-                                    Long eid = er.getLong("doctor_id");
-                                    Long pid = er.getLong("patient_id");
-
-                                    String empName = (eid != null) ? doctorNames.get(eid) : null;
-                                    String patName = (pid != null) ? patientNames.get(pid) : null;
-
-                                    if (empName == null) continue;
-
-                                    JsonObject json = new JsonObject()
-                                            .put("encounter_id", er.getLong("id"))
-                                            .put("date_time", er.getLocalDateTime("date_time").toString())
-                                            .put("doctor_name", empName)
-                                            .put("patient_name", patName)
-                                            .put("note", er.getString("note"));
-
-                                    result.add(json);
-                                }
-
-                                return result;
-                            });
-                });
+                        return Uni.createFrom().item(result);
+                    });
+        });
     }
 
 }

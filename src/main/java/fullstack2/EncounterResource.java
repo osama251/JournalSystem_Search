@@ -25,7 +25,7 @@ public class EncounterResource {
     //@Produces(MediaType.APPLICATION_JSON)
     public Uni<List<JsonObject>> getAllEncounters() {
         return logsPool
-                .query("SELECT id, date_time, employee_id, patient_id FROM encounter")
+                .query("SELECT id, date_time, doctor_id, patient_id FROM encounter")
                 .execute()
                 .onItem().transform(rows -> {
                     List<JsonObject> list = new ArrayList<>();
@@ -33,8 +33,8 @@ public class EncounterResource {
                         JsonObject json = new JsonObject()
                                 .put("id", row.getLong("id"))
                                 .put("date_time", row.getLocalDateTime("date_time").toString())
-                                .put("employee_id", row.getLong("employee_id"))
-                                .put("patient_id", row.getLong("patient_id"));
+                                .put("doctor_id", row.getString("doctor_id"))
+                                .put("patient_id", row.getString("patient_id"));
                         list.add(json);
                     }
                     return list;

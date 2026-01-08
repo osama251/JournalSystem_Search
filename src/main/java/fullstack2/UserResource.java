@@ -1,5 +1,6 @@
 package fullstack2;
 
+import io.quarkus.security.Authenticated;
 import io.smallrye.mutiny.Uni;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Inject;
@@ -18,6 +19,7 @@ import java.util.stream.Collectors;
 
 @Path("/user")
 @Produces(MediaType.APPLICATION_JSON)
+@Authenticated
 public class UserResource {
 
     @Inject

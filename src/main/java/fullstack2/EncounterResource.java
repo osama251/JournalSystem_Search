@@ -1,5 +1,6 @@
 package fullstack2;
 
+import io.quarkus.security.Authenticated;
 import io.smallrye.mutiny.Uni;
 import io.vertx.core.json.JsonObject;
 import io.vertx.mutiny.mysqlclient.MySQLPool;
@@ -15,6 +16,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 @Path("/encounter")
+@Authenticated
 public class EncounterResource {
 
     @Inject

@@ -1,5 +1,6 @@
 package fullstack2;
 
+import io.quarkus.security.Authenticated;
 import io.smallrye.mutiny.Uni;
 import io.vertx.core.json.JsonObject;
 import io.vertx.mutiny.mysqlclient.MySQLPool;
@@ -22,6 +23,7 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 @Path("/doctor")
+@Authenticated
 public class DoctorResource {
 
     @Inject

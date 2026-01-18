@@ -1,72 +1,53 @@
-# journalsystem_search
+# JournalSystem_Search
 
-This project uses Quarkus, the Supersonic Subatomic Java Framework.
+Search microservice for the larger **JournalSystem** project.  
+Responsible for performing **cross-entity and cross-service searches**, such as:
 
-If you want to learn more about Quarkus, please visit its website: <https://quarkus.io/>.
+- Patients by doctor
+- Patients by condition
+- Patients by age or other attributes
 
-## Running the application in dev mode
+This service is implemented using **Quarkus** and is optimized for fast, stateless query operations.  
+It is designed to run as part of a **containerized microservices architecture** using Docker and Kubernetes.
 
-You can run your application in dev mode that enables live coding using:
+---
 
-```shell script
-./mvnw quarkus:dev
-```
+## Features
 
-> **_NOTE:_**  Quarkus now ships with a Dev UI, which is available in dev mode only at <http://localhost:8080/q/dev/>.
+- Search patients by assigned doctor
+- Search patients by medical condition
+- Search patients by age and other attributes
+- Aggregates and queries data across databases
+- REST API built with Quarkus
+- MySQL persistence (reactive)
+- Secured with Keycloak (OIDC)
+- Containerized with Docker and deployable with Kubernetes
+- Unit-tested service logic
 
-## Packaging and running the application
+---
 
-The application can be packaged using:
+## Tech Stack
 
-```shell script
-./mvnw package
-```
+- **Java 17**
+- **Quarkus** (REST API)
+- **MySQL (Reactive client)**
+- **Keycloak** (OIDC authentication & authorization)
+- **Docker**
+- **Kubernetes (k3s)**
+- **JUnit 5** (unit tests)
 
-It produces the `quarkus-run.jar` file in the `target/quarkus-app/` directory.
-Be aware that it’s not an _über-jar_ as the dependencies are copied into the `target/quarkus-app/lib/` directory.
+---
 
-The application is now runnable using `java -jar target/quarkus-app/quarkus-run.jar`.
+## Architecture (high level)
 
-If you want to build an _über-jar_, execute the following command:
+- `resource/` contains REST endpoints (Quarkus resources)
+- Reactive, non-blocking database access using Quarkus
 
-```shell script
-./mvnw package -Dquarkus.package.jar.type=uber-jar
-```
+This service is stateless and designed to scale horizontally.
 
-The application, packaged as an _über-jar_, is now runnable using `java -jar target/*-runner.jar`.
+---
 
-## Creating a native executable
+## Kubernetes
 
-You can create a native executable using:
-
-```shell script
-./mvnw package -Dnative
-```
-
-Or, if you don't have GraalVM installed, you can run the native executable build in a container using:
-
-```shell script
-./mvnw package -Dnative -Dquarkus.native.container-build=true
-```
-
-You can then execute your native executable with: `./target/journalsystem_search-1.0-SNAPSHOT-runner`
-
-If you want to learn more about building native executables, please consult <https://quarkus.io/guides/maven-tooling>.
-
-## Related Guides
-
-- REST ([guide](https://quarkus.io/guides/rest)): A Jakarta REST implementation utilizing build time processing and
-  Vert.x. This extension is not compatible with the quarkus-resteasy extension, or any of the extensions that depend on
-  it.
-- Reactive MySQL client ([guide](https://quarkus.io/guides/reactive-sql-clients)): Connect to the MySQL database using
-  the reactive pattern
-- REST Jackson ([guide](https://quarkus.io/guides/rest#json-serialisation)): Jackson serialization support for Quarkus
-  REST. This extension is not compatible with the quarkus-resteasy extension, or any of the extensions that depend on it
-
-## Provided Code
-
-### REST
-
-Easily start your REST Web Services
-
-[Related guide section...](https://quarkus.io/guides/getting-started-reactive#reactive-jax-rs-resources)
+- This service is deployed as part of the project’s Kubernetes (k3s) setup
+- Deployment manifests are managed in the **JournalSystem_Q8SFILES** repository
